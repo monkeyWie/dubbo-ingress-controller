@@ -1,0 +1,9 @@
+.git
+.idea
+.svn
+.eclipse
+.vsc
+*Dockerfile
+*.log
+.ci-resources
+.DS_Store
