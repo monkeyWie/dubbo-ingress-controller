@@ -54,6 +54,5 @@ spec:
       containers:
         - name: dubbo-ingress-controller
           image: liwei2633/dubbo-ingress-controller:0.0.1
-          imagePullPolicy: Always
           ports:
             - containerPort: 20880
