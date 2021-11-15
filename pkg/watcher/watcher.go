@@ -5,10 +5,9 @@ import (
 	"dubbo.apache.org/dubbo-go/v3/common/logger"
 	"fmt"
 	v1beta12 "k8s.io/api/extensions/v1beta1"
-	"k8s.io/apimachinery/pkg/labels"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/listers/extensions/v1beta1"
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/bep/debounce"
@@ -29,7 +28,6 @@ func NewWatcher(client kubernetes.Interface, eventHandler EventHandler) *Watcher
 
 func (w *Watcher) Start(ctx context.Context) error {
 	factory := informers.NewSharedInformerFactory(w.client, time.Minute)
-	ingressLister := factory.Extensions().V1beta1().Ingresses().Lister()
 
 	handleAdd := func(obj interface{}) {
 		ingress, ok := obj.(*v1beta12.Ingress)
@@ -81,7 +79,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 
 	// 首次启动直接全量来一次
-	w.fullSync(ingressLister)
+	w.fullSync(w.client)
 
 	informer := factory.Extensions().V1beta1().Ingresses().Informer()
 	informer.AddEventHandler(handler)
@@ -90,31 +88,24 @@ func (w *Watcher) Start(ctx context.Context) error {
 	return nil
 }
 
-func (w *Watcher) fullSync(ingressLister v1beta1.IngressLister) {
-	ingresses, err := ingressLister.List(labels.Everything())
+func (w *Watcher) fullSync(client kubernetes.Interface) {
+	ingressList, err := client.ExtensionsV1beta1().Ingresses("").List(v1.ListOptions{})
 	if err != nil {
-		logger.Errorf("list ingress fail: %v", err)
+		logger.Errorf("list controller fail: %v", err)
 		return
 	}
 
-	for _, ingress := range ingresses {
-		ingressClass := ingress.Annotations["kubernetes.io/ingress.class"]
-		if ingressClass == "dubbo" && ingress.Spec.Rules != nil {
-			for _, rule := range ingress.Spec.Rules {
-				if len(rule.HTTP.Paths) > 0 {
-					backend := rule.HTTP.Paths[0].Backend
-					eventData := &EventData{
-						Host:    rule.Host,
-						Service: fmt.Sprintf("%s:%d", backend.ServiceName, backend.ServicePort.IntVal),
-					}
-					w.eventHandler.OnAdd(eventData)
-				}
-			}
+	for _, ingress := range ingressList.Items {
+		eventData := ingressToEvent(&ingress)
+		if eventData != nil {
+			w.eventHandler.OnAdd(eventData)
 		}
 	}
 }
 
 func ingressToEvent(ingress *v1beta12.Ingress) *EventData {
+	// 过滤出dubbo ingress
+	// TODO dubbo现在是写死的，后续需要改成可配置的
 	ingressClass := ingress.Annotations["kubernetes.io/ingress.class"]
 	if ingressClass == "dubbo" && len(ingress.Spec.Rules) > 0 {
 		rule := ingress.Spec.Rules[0]
@@ -122,7 +113,7 @@ func ingressToEvent(ingress *v1beta12.Ingress) *EventData {
 			backend := rule.HTTP.Paths[0].Backend
 			return &EventData{
 				Host:    rule.Host,
-				Service: fmt.Sprintf("%s:%d", backend.ServiceName, backend.ServicePort.IntVal),
+				Service: fmt.Sprintf("%s:%d", backend.ServiceName+"."+ingress.Namespace, backend.ServicePort.IntVal),
 			}
 		}
 	}

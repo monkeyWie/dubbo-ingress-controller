@@ -6,6 +6,7 @@ import (
 	"context"
 	"dubbo.apache.org/dubbo-go/v3/common/logger"
 	"dubbo.apache.org/dubbo-go/v3/protocol/dubbo/impl"
+	"fmt"
 	hessian "github.com/apache/dubbo-go-hessian2"
 	"github.com/pkg/errors"
 	"io"
@@ -14,18 +15,20 @@ import (
 )
 
 type Server struct {
+	port         int
 	routingTable *sync.Map
 }
 
-func NewServer() *Server {
+func NewServer(port int) *Server {
 	return &Server{
+		port:         port,
 		routingTable: &sync.Map{},
 	}
 }
 
 func (s *Server) Start(ctx context.Context) error {
 	var lc net.ListenConfig
-	listener, err := lc.Listen(ctx, "tcp", ":20881")
+	listener, err := lc.Listen(ctx, "tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -35,7 +38,6 @@ func (s *Server) Start(ctx context.Context) error {
 			logger.Errorf("accept error:%v", err)
 			continue
 		}
-		logger.Info("client accept")
 		go func() {
 			defer clientConn.Close()
 			var proxyConn net.Conn
@@ -52,21 +54,31 @@ func (s *Server) Start(ctx context.Context) error {
 					return
 				}
 			}
-			if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+			/*if err := scanner.Err(); err != nil {
 				logger.Warnf("scanner error:%v", err)
 				return
-			}
-
+			}*/
 		}()
 	}
 }
 
 func (s *Server) PutRoute(target string, host string) {
 	s.routingTable.Store(target, host)
+	s.logRoute()
 }
 
 func (s *Server) DeleteRoute(target string) {
 	s.routingTable.Delete(target)
+	s.logRoute()
+}
+
+func (s *Server) logRoute() {
+	str := ""
+	s.routingTable.Range(func(key, value interface{}) bool {
+		str += fmt.Sprintf("%s=%s\t", key, value)
+		return true
+	})
+	logger.Infof("routing table: %s", str)
 }
 
 func (s *Server) handleData(clientConn net.Conn, proxyConn net.Conn, data []byte) (err error) {
@@ -91,8 +103,12 @@ func (s *Server) handleData(clientConn net.Conn, proxyConn net.Conn, data []byte
 	if !ok {
 		return errors.New("no target-application")
 	}
+	logger.Infof("target application: %s", target)
 	if proxyConn == nil {
-		host, _ := s.routingTable.Load(target)
+		host, ok := s.routingTable.Load(target)
+		if !ok {
+			return errors.Errorf("no routing: %s", target)
+		}
 		proxyConn, err = net.Dial("tcp", host.(string))
 		if err != nil {
 			return errors.WithStack(err)
@@ -111,6 +127,10 @@ func (s *Server) handleData(clientConn net.Conn, proxyConn net.Conn, data []byte
 }
 
 func split(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
 	buf := bytes.NewBuffer(data)
 	pkg := impl.NewDubboPackage(buf)
 	err = pkg.ReadHeader()
