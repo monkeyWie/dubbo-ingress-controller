@@ -2,7 +2,7 @@ package main
 
 import (
 	"dubbo.apache.org/dubbo-go/v3/common/logger"
-	"github/monkeyWie/dubbo-ingress/pkg/controller"
+	"github/monkeyWie/dubbo-ingress-controller/pkg/controller"
 	"k8s.io/client-go/rest"
 )
 

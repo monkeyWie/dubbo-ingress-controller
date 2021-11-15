@@ -3,8 +3,8 @@ package controller
 import (
 	"context"
 	"dubbo.apache.org/dubbo-go/v3/common/logger"
-	"github/monkeyWie/dubbo-ingress/pkg/server"
-	"github/monkeyWie/dubbo-ingress/pkg/watcher"
+	"github/monkeyWie/dubbo-ingress-controller/pkg/server"
+	"github/monkeyWie/dubbo-ingress-controller/pkg/watcher"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"

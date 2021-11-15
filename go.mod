@@ -1,4 +1,4 @@
-module github/monkeyWie/dubbo-ingress
+module github/monkeyWie/dubbo-ingress-controller
 
 go 1.17
 
