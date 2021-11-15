@@ -49,7 +49,7 @@ func (s *Server) Start(ctx context.Context) error {
 			scanner := bufio.NewScanner(clientConn)
 			scanner.Split(split)
 			for scanner.Scan() {
-				if err := s.handleData(clientConn, proxyConn, scanner.Bytes()); err != nil {
+				if err := s.handleData(clientConn, &proxyConn, scanner.Bytes()); err != nil {
 					logger.Warnf("handle data error:%v", err)
 					return
 				}
@@ -81,7 +81,7 @@ func (s *Server) logRoute() {
 	logger.Infof("routing table: %s", str)
 }
 
-func (s *Server) handleData(clientConn net.Conn, proxyConn net.Conn, data []byte) (err error) {
+func (s *Server) handleData(clientConn net.Conn, proxyConn *net.Conn, data []byte) (err error) {
 	buf := bytes.NewBuffer(data)
 	pkg := impl.NewDubboPackage(buf)
 	if err = pkg.Unmarshal(); err != nil {
@@ -103,24 +103,22 @@ func (s *Server) handleData(clientConn net.Conn, proxyConn net.Conn, data []byte
 	if !ok {
 		return errors.New("no target-application")
 	}
-	logger.Infof("target application: %s", target)
-	if proxyConn == nil {
+	if *proxyConn == nil {
+		logger.Infof("target application: %s", target)
 		host, ok := s.routingTable.Load(target)
 		if !ok {
 			return errors.Errorf("no routing: %s", target)
 		}
-		proxyConn, err = net.Dial("tcp", host.(string))
+		*proxyConn, err = net.Dial("tcp", host.(string))
 		if err != nil {
 			return errors.WithStack(err)
 		}
 		logger.Infof("target connected:[%s] %s", target, host)
 		go func() {
-			if _, err2 := io.Copy(clientConn, proxyConn); err2 != nil && !errors.Is(err2, io.EOF) {
-				logger.Errorf("io copy error: %v", err2)
-			}
+			io.Copy(clientConn, *proxyConn)
 		}()
 	}
-	if _, err = proxyConn.Write(data); err != nil {
+	if _, err = (*proxyConn).Write(data); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
