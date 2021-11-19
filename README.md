@@ -41,7 +41,6 @@ kubectl apply -f deploy.yaml
 apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
-  namespace: linge
   name: user-rpc-ingress
   annotations:
     kubernetes.io/ingress.class: "dubbo"
