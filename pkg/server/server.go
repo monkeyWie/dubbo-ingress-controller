@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"dubbo.apache.org/dubbo-go/v3/common/logger"
@@ -46,13 +45,14 @@ func (s *Server) Start(ctx context.Context) error {
 					proxyConn.Close()
 				}
 			}()
-			scanner := bufio.NewScanner(clientConn)
-			scanner.Split(split)
-			for scanner.Scan() {
-				if err := s.handleData(clientConn, &proxyConn, scanner.Bytes()); err != nil {
-					logger.Warnf("handle data error:%v", err)
-					return
-				}
+			requestData, err := resolveRequest(clientConn)
+			if err != nil {
+				logger.Errorf("resolve request error:%v", err)
+				return
+			}
+			if err := s.handleData(clientConn, &proxyConn, requestData); err != nil {
+				logger.Warnf("handle data error:%v", err)
+				return
 			}
 			/*if err := scanner.Err(); err != nil {
 				logger.Warnf("scanner error:%v", err)
@@ -103,47 +103,49 @@ func (s *Server) handleData(clientConn net.Conn, proxyConn *net.Conn, data []byt
 	if !ok {
 		return errors.New("no target-application")
 	}
-	if *proxyConn == nil {
-		logger.Infof("target application: %s", target)
-		host, ok := s.routingTable.Load(target)
-		if !ok {
-			return errors.Errorf("no routing: %s", target)
-		}
-		*proxyConn, err = net.Dial("tcp", host.(string))
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		logger.Infof("target connected:[%s] %s", target, host)
-		go func() {
-			io.Copy(clientConn, *proxyConn)
-		}()
+	logger.Infof("target application: %s", target)
+	host, ok := s.routingTable.Load(target)
+	if !ok {
+		return errors.Errorf("no routing: %s", target)
 	}
+	*proxyConn, err = net.Dial("tcp", host.(string))
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	logger.Infof("target connected:[%s] %s", target, host)
+	go func() {
+		io.Copy(clientConn, *proxyConn)
+	}()
+
 	if _, err = (*proxyConn).Write(data); err != nil {
+		return errors.WithStack(err)
+	}
+	if _, err := io.Copy(*proxyConn, clientConn); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
 }
 
-func split(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	if atEOF && len(data) == 0 {
-		return 0, nil, nil
+func resolveRequest(reader io.Reader) ([]byte, error) {
+	headerData := make([]byte, impl.HEADER_LENGTH)
+	if _, err := io.ReadFull(reader, headerData); err != nil {
+		return nil, errors.WithStack(err)
 	}
 
-	buf := bytes.NewBuffer(data)
-	pkg := impl.NewDubboPackage(buf)
-	err = pkg.ReadHeader()
-	if err != nil {
-		if errors.Is(err, hessian.ErrHeaderNotEnough) || errors.Is(err, hessian.ErrBodyNotEnough) {
-			return 0, nil, nil
-		}
-		return 0, nil, err
+	headerBuf := bytes.NewBuffer(headerData)
+	pkg := impl.NewDubboPackage(headerBuf)
+	if err := pkg.ReadHeader(); err != nil && !errors.Is(err, hessian.ErrBodyNotEnough) {
+		return nil, errors.WithStack(err)
 	}
+
 	if !pkg.IsRequest() {
-		return 0, nil, errors.New("not request")
+		return nil, errors.New("not request")
 	}
-	requestLen := impl.HEADER_LENGTH + pkg.Header.BodyLen
-	if len(data) < requestLen {
-		return 0, nil, nil
+
+	bodyData := make([]byte, pkg.GetBodyLen())
+	if _, err := io.ReadFull(reader, bodyData); err != nil {
+		return nil, errors.WithStack(err)
 	}
-	return requestLen, data[0:requestLen], nil
+
+	return append(headerData, bodyData...), nil
 }
