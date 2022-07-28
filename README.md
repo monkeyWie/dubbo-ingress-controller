@@ -102,3 +102,7 @@ DUBBO_PORT_TO_REGISTRY=20880
 ```
 
 一切准备就绪之后，就可以在本地启动消费者进行 dubbo 服务调用了。
+
+## 实现思路
+
+[手撸一个ingress controller来打通dubbo+k8s网络](https://monkeywie.cn/2021/11/16/dubbo-in-k8s/)
